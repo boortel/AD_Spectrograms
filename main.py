@@ -1,4 +1,5 @@
 import os
+import csv
 import pickle
 import logging
 import traceback
@@ -74,26 +75,34 @@ def fsVisualise(metrics, idData):
 
 
 # Set the root folder for reading the data
-rootdir = '../../Datasets/Spectrograms_Smeral'
-#rootdir = '../../Datasets/Spectrograms_MaxMill'
+#ROOTDIR = '../../Datasets/Spectrograms_Smeral'
+ROOTDIR = '../../Datasets/Spectrograms_MaxMill'
+
+# Set the flag for feature extractor selection
+EXTRACTOR = 'ResNet50'  # 'HardNet' or 'ResNet50'
+
+# Set the path for saved images
+SAVEPATH = os.path.join('./AD_SpectrogramResults/', EXTRACTOR, 'MaxMill')
 
 # Set the flag for loading the pics
-loadImageData = True
+LOAD_IMAGES = True
+
+# Set the flag for visualising the feature space
+FS_VISUALISE = False
 
 def main():
 
     # Set the dict to save the spectrograms
     dictSpectrograms = {}
 
-    # Define the sensors name
-    #sensors = ['snimac1', 'snimac2']
+    # Initialize the sensor list
     sensors = []
 
     ## Image loader
 
     # Loop through the spectrograms, sensors, images and runs to get number of images for each run
-    for spectName in natural_sort(os.listdir(rootdir)):
-        folderPath = os.path.join(rootdir, spectName)
+    for spectName in natural_sort(os.listdir(ROOTDIR)):
+        folderPath = os.path.join(ROOTDIR, spectName)
         if os.path.isdir(folderPath):
 
             for sensorName in natural_sort(os.listdir(folderPath)):
@@ -103,7 +112,7 @@ def main():
                     runCounter = 0
                     for runName in natural_sort(os.listdir(sensorPath)):
                         runPath = os.path.join(sensorPath, runName)
-                        if os.path.isdir(sensorPath):
+                        if os.path.isdir(runPath):
 
                             imageCount = 0
                             for image in natural_sort(os.listdir(runPath)):
@@ -116,53 +125,56 @@ def main():
     axes = [[] for _ in range(imageCount)]
 
     # Load the image data
-    if loadImageData:
+    if LOAD_IMAGES:
 
         # Loop through the spectrograms
-        for spectName in natural_sort(os.listdir(rootdir)):
+        for spectName in natural_sort(os.listdir(ROOTDIR)):
 
             # Build the path to the spectrogram folder and update the dict
-            folderPath = os.path.join(rootdir, spectName)
-            dictSpectrograms.update({spectName: {}})
+            folderPath = os.path.join(ROOTDIR, spectName)
+            if os.path.isdir(folderPath):
+                dictSpectrograms.update({spectName: {}})
 
-            # Loop through the sensors
-            for sensorName in sensors:
+                # Loop through the sensors
+                for sensorName in sensors:
 
-                axes = [[] for _ in range(imageCount)]
+                    axes = [[] for _ in range(imageCount)]
 
-                # Build the path to the sensor and update the dict
-                sensorPath = os.path.join(folderPath, sensorName)
-                dictSpectrograms[spectName].update({sensorName: {}})
+                    # Build the path to the sensor and update the dict
+                    sensorPath = os.path.join(folderPath, sensorName)
+                    if os.path.isdir(sensorPath):
+                        dictSpectrograms[spectName].update({sensorName: {}})
 
-                # Loop through the runs to get the images
-                for runName in natural_sort(os.listdir(sensorPath)):
+                        # Loop through the runs to get the images
+                        for runName in natural_sort(os.listdir(sensorPath)):
 
-                    # Build the path to the run and set the axis counter to zero
-                    runPath = os.path.join(sensorPath, runName)
-                    axisCounter = 0
+                            # Build the path to the run and set the axis counter to zero
+                            runPath = os.path.join(sensorPath, runName)
+                            if os.path.isdir(runPath):
+                                axisCounter = 0
 
-                    # Load the images
-                    for image in natural_sort(os.listdir(runPath)):
+                                # Load the images
+                                for image in natural_sort(os.listdir(runPath)):
 
-                        # Build the path to the image
-                        imagePath = os.path.join(runPath, image)
+                                    # Build the path to the image
+                                    imagePath = os.path.join(runPath, image)
 
-                        # Process only PNG files
-                        if (image.endswith(".png")):
+                                    # Process only PNG files
+                                    if (image.endswith(".png")):
 
-                            # Convert the image to the numpy array
-                            imageFrame = Image.open(imagePath)
-                            imageMatrix = np.divide(np.array(imageFrame), 255)
+                                        # Convert the image to the numpy array
+                                        imageFrame = Image.open(imagePath)
+                                        imageMatrix = np.divide(np.array(imageFrame), 255)
 
-                            axes[axisCounter].append(imageMatrix)
+                                        axes[axisCounter].append(imageMatrix)
+                                        axisCounter += 1
+
+                        # Update the dictionary with the runs for one spectrogram and sensor
+                        axisCounter = 0
+
+                        for axis in axes:
+                            dictSpectrograms[spectName][sensorName].update({'data' + str(axisCounter): axis})
                             axisCounter += 1
-
-                # Update the dictionary with the runs for one spectrogram and sensor
-                axisCounter = 0
-
-                for axis in axes:
-                    dictSpectrograms[spectName][sensorName].update({'data' + str(axisCounter): axis})
-                    axisCounter += 1
 
         # Save the spectrogram dictionary
         with open('./spectrograms.pickle', 'wb') as handle:
@@ -181,7 +193,8 @@ def main():
 
     clf = LocalOutlierFactor(n_neighbors=4)
 
-    dictSpectrogramsHN = dictSpectrograms.copy()
+    anomalyScores = []
+    anomalyScoresMed = []
 
     # Loop through the spectrograms, sensors and sensor data
     for spectrograms, _ in dictSpectrograms.items():
@@ -190,7 +203,6 @@ def main():
 
         for sensors, _ in dictSpectrograms[spectrograms].items():
 
-            #sensorData = ['dataX', 'dataY', 'dataZ']
             sensorData = list(dictSpectrograms[spectrograms][sensors].keys())
 
             for data in sensorData:
@@ -201,7 +213,7 @@ def main():
                 images = dictSpectrograms[spectrograms][sensors][data]
                 
                 # HardNet
-                if True:
+                if EXTRACTOR == 'HardNet':
                     for img in images:
                         #preprocessedData.append(cv.resize(cv.cvtColor(np.squeeze(img), cv.COLOR_GRAY2RGB), (32, 32), interpolation=cv.INTER_AREA))
                         preprocessedData.append(cv.resize(np.squeeze(img), (32, 32), interpolation = cv.INTER_AREA))
@@ -210,7 +222,8 @@ def main():
                     preprocessedData = np.expand_dims(preprocessedData, axis=3)
 
                 # ResNet50
-                if False:
+                if EXTRACTOR == 'ResNet50':
+                    
                     for img in images:
                         # Convert the image to uint8 and ensure it has three channels
                         img_8u = cv.convertScaleAbs(np.squeeze(img))
@@ -218,17 +231,15 @@ def main():
                         resized_img = cv.resize(img_rgb, (32, 32), interpolation=cv.INTER_AREA)
                         preprocessedData.append(resized_img)
 
-                preprocessedData = np.array(preprocessedData)
-                # No need to expand dimensions as ResNet50 expects (32, 32, 3) format
-                # preprocessedData = np.expand_dims(preprocessedData, axis=3)
+                    preprocessedData = np.array(preprocessedData)
 
-                # Run the images through HardNet
+                # Run the images through the feature extractor
 
                 # Generate batches
                 batches = gen_batches(preprocessedData.shape[0], 20)
                 fsRun = True
                 
-                if True:
+                if EXTRACTOR == 'HardNet':
                     # Get HardNet features  
                     for batch in batches:
                         temp = hardNet.forward(preprocessedData[batch])
@@ -239,7 +250,7 @@ def main():
                         else:
                             metrics = np.concatenate((metrics, temp), axis=0)
 
-                if False:
+                if EXTRACTOR == 'ResNet50':
                     # Get ResNet50 features  
                     for batch in batches:
                         temp = batch
@@ -251,39 +262,63 @@ def main():
                             fsRun = False
                         else:
                             metrics = np.concatenate((metrics, temp), axis=0)
-
-                dictSpectrogramsHN[spectrograms][sensors][data] = metrics
-
+                
+                # Fit the classifier and get the average anomaly score from sensors and runs
                 clf.fit_predict(metrics)
 
-                #fsVisualise(metrics, [spectrograms, sensors, data])
                 anomalyScore = clf.negative_outlier_factor_
-
                 avgAnomalyScore = anomalyScore + avgAnomalyScore
 
-        # Get the average anomaly score and normalize it
+                # Visualise the feature space
+                if FS_VISUALISE:
+                    fsVisualise(metrics, [spectrograms, sensors, data])
+
+                
+        # Get the average anomaly score, save it raw and with median substraction
         avgAnomalyScore = avgAnomalyScore / (imageCount * len(sensors))
 
-        #avgAnomalyScore = avgAnomalyScore.reshape(-1, 1)
-        #avgAnomalyScoreNorm = pre.MinMaxScaler().fit_transform(avgAnomalyScore)
-
-        #minScore = min(avgAnomalyScore)
-        #maxScore = max(avgAnomalyScore)
-
-        #avgAnomalyScoreNorm = (avgAnomalyScore - minScore)/(maxScore - minScore)
-
-        output_dir = os.path.join('./AD_Spectrograms/dataHN/', spectrograms)
+        anomalyScores.append(avgAnomalyScore)
+        anomalyScoresMed.append(avgAnomalyScore - np.median(avgAnomalyScore))
+        
+        output_dir = os.path.join(SAVEPATH, spectrograms)
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
         plt.bar(np.arange(0, runCounter), avgAnomalyScore)
-        plt.savefig(os.path.join(os.path.join('./AD_Spectrograms/dataHN/', spectrograms), 'AnomalyScore.png'))
+        plt.savefig(os.path.join(os.path.join(SAVEPATH, spectrograms), 'AnomalyScore.png'))
         plt.close()
 
-        with open(os.path.join(os.path.join('./AD_Spectrograms/dataHN/', spectrograms), 'AnomalyScore.txt'), "w") as output:
+        with open(os.path.join(os.path.join(SAVEPATH, spectrograms), 'AnomalyScore.txt'), "w") as output:
             output.write(str(avgAnomalyScore))
-                
-    print('hotovo')
+    
+    # Get std deviations of anomaly scores from spectrograms and runs
+    anomalyScoresNP = np.array(anomalyScores)
+    spectDev = []
+    runDev = []
+
+    for spectrogramScore in anomalyScoresNP:
+        spectDev.append(np.std(spectrogramScore))
+
+    for runScore in np.transpose(anomalyScoresNP):
+        runDev.append(np.std(runScore))
+
+    # Save the anomaly scores to CSV
+    with open(os.path.join(SAVEPATH, 'anomalyScores.csv'), 'w') as f:
+        writer = csv.writer(f)
+        writer.writerows(anomalyScores)
+
+    if False:
+        # Save the spectrogram scores to CSV
+        with open(os.path.join(SAVEPATH, 'spectrogramScores.csv'), 'w') as f:
+            writer = csv.writer(f)
+            writer.writerows(spectDev)
+
+        # Save the run scores to CSV
+        with open(os.path.join(SAVEPATH, 'runScores.csv'), 'w') as f:
+            writer = csv.writer(f)
+            writer.writerows(runDev)
+
+    print('Evaluation finished!')
 
 if __name__ == '__main__':
     main()
